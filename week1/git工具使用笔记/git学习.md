@@ -26,8 +26,8 @@ git config --global core.editor "code --wait"  # 设置默认编辑器
 - 克隆仓库：`git clone <url>`
 - 文件状态管理：
   ```bash
-  git add <file>      # 添加到暂存区
-  git commit -m "msg" # 提交到版本库
+  git add <file>      # 添加到暂存区，常用git add .，此处.意为全部文件
+  git commit -m "msg" # 提交到版本库，-m后为注释信息
   git status          # 查看状态
   git diff            # 查看差异
   ```
@@ -93,4 +93,34 @@ git revert <commit>      # 创建逆向提交
 ```
 git rebase -i HEAD~3     # 交互式变基
 git cherry-pick <commit> # 选择性应用提交
+```
+
+### 常见的问题
+
+当本地分支名（master）和远程分支名（main）不同时，会导致以后每次都要指定 `origin main`，即 `git pull --rebase origin main`。
+
+所以推荐统一分支名：
+
+```bash
+# 本地分支改名为 main（推荐，与远程一致）
+git branch -m master main
+git branch -u origin/main main
+
+# 以后直接
+git pull --rebase
+git push
+```
+
+其次，https连接通常会不稳定，建议**彻底改用 SSH 协议。**
+
+正常指定仓库远程地址：`git remote add origin https://github.com/XXXXXX/xxxxx.git`
+
+如果需要修改则使用：`git remote set-url origin git@github.com:XXXXXX/XXXXXX.git`
+
+如果需要测试网络连接则使用：
+
+```bash
+# 测试 SSH 连接
+ssh -T git@github.com
+# 应返回：Hi yzxxqwq! You've successfully authenticated...
 ```
