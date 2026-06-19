@@ -18,7 +18,7 @@ git config --global core.editor "code --wait"  # 设置默认编辑器
 
 ## 核心工作流程
 
-1781859619838
+![1781861567764](image/git学习/1781861567764.png)
 
 ### 仓库操作
 
@@ -34,14 +34,12 @@ git config --global core.editor "code --wait"  # 设置默认编辑器
 
 ### 分支管理
 
-
-| 功能   | 命令                       |
-| ---- | ------------------------ |
+| 功能     | 命令                       |
+| -------- | -------------------------- |
 | 创建分支 | `git branch <name>`      |
 | 切换分支 | `git checkout <branch>`  |
 | 合并分支 | `git merge <branch>`     |
 | 删除分支 | `git branch -d <branch>` |
-
 
 - 冲突解决：手动编辑冲突文件，`git add`，`git commit`。
 - `git merge`时默认情况Git会执行"快进式合并"（fast-farward merge），会直接将Master分支指向Develop分支。此时需要使用 `--no-ff`参数在Master分支上生成一个新节点。
