@@ -1,0 +1,7 @@
+﻿experiment,activation,kernel_size,stride,pool_type,output_type,best_test_acc,final_test_acc,flatten_dim,elapsed_sec
+baseline_relu,relu,3,1,max,softmax,0.7289,0.7208,4096,177.0
+activation_sigmoid,sigmoid,3,1,max,softmax,0.6181,0.6181,4096,175.2
+kernel_5,relu,5,1,max,softmax,0.7288,0.7270,4096,180.5
+stride_2,relu,3,2,max,softmax,0.6150,0.6147,256,165.8
+pool_avg,relu,3,1,avg,softmax,0.7089,0.7086,4096,167.2
+output_sigmoid,relu,3,1,max,sigmoid,0.7228,0.7211,4096,151.3
