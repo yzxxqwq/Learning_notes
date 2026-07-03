@@ -27,6 +27,7 @@ from torch.nn.utils.rnn import pack_padded_sequence
 from torch.utils.data import DataLoader, Dataset
 from torch.utils.tensorboard import SummaryWriter
 
+# 设置数据/图像/结果输出的目录
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 FIG_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "figures")
 RESULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
@@ -37,6 +38,7 @@ TRAIN_URL = (
     "sentiment-analysis-moviereviews/master/train.tsv"
 )
 
+# 情感类别名与类别数
 SENTIMENT_NAMES = [
     "negative",
     "somewhat negative",
@@ -48,7 +50,7 @@ NUM_CLASSES = 5
 PAD_TOKEN = "<PAD>"
 UNK_TOKEN = "<UNK>"
 
-
+# 训练配置参数定义
 @dataclass
 class TrainConfig:
     model_type: str = "self_attn"
@@ -63,25 +65,25 @@ class TrainConfig:
     max_samples: int = 50000
     seed: int = 42
 
-
+# 设置matplotlib中文与字体正常
 def setup_plot_style():
     plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "DejaVu Sans"]
     plt.rcParams["axes.unicode_minus"] = False
 
-
+# 全局随机种子，保证实验可重复
 def set_seed(seed):
     torch.manual_seed(seed)
     np.random.seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
 
-
+# 基本英文分词
 def tokenize(text):
     text = text.lower().strip()
     text = re.sub(r"[^a-z0-9\s']", " ", text)
     return text.split()
 
-
+# 下载训练数据集（仅首次需要）
 def download_train_tsv():
     os.makedirs(DATA_DIR, exist_ok=True)
     path = os.path.join(DATA_DIR, "train.tsv")
@@ -92,25 +94,26 @@ def download_train_tsv():
     print(f"Saved to {path}")
     return path
 
-
+# 加载数据/标签
 def load_phrases(path):
     phrases, labels = [], []
     with open(path, "r", encoding="utf-8", newline="") as fp:
         reader = csv.DictReader(fp, delimiter="\t")
         for row in reader:
-            if not tokenize(row["Phrase"]):
+            if not tokenize(row["Phrase"]):  # 跳过空文本
                 continue
             phrases.append(row["Phrase"])
             labels.append(int(row["Sentiment"]))
     return phrases, labels
 
-
+# 词典类，负责构建和映射（tok<->id）
 class Vocabulary:
     def __init__(self, max_size=10000):
         self.max_size = max_size
         self.token2id = {PAD_TOKEN: 0, UNK_TOKEN: 1}
         self.id2token = [PAD_TOKEN, UNK_TOKEN]
 
+    # 基于训练集构建词表
     def build(self, texts):
         freq = {}
         for text in texts:
@@ -123,6 +126,7 @@ class Vocabulary:
                 self.token2id[tok] = len(self.id2token)
                 self.id2token.append(tok)
 
+    # 文本转id、自动填充到max_len
     def encode(self, text, max_len):
         ids = [self.token2id.get(tok, 1) for tok in tokenize(text)]
         if not ids:
@@ -132,6 +136,7 @@ class Vocabulary:
         ids = ids + [0] * (max_len - len(ids))
         return ids, length
 
+    # OOV比例（未登录词率）
     def oov_rate(self, texts):
         total, oov = 0, 0
         for text in texts:
@@ -144,7 +149,7 @@ class Vocabulary:
     def __len__(self):
         return len(self.id2token)
 
-
+# 自定义数据集，与torch DataLoader配合
 class SentimentDataset(Dataset):
     def __init__(self, phrases, labels, vocab, max_len):
         self.phrases = phrases
@@ -163,7 +168,7 @@ class SentimentDataset(Dataset):
             torch.tensor(self.labels[idx], dtype=torch.long),
         )
 
-
+# DataLoader批量拼接用
 def collate_fn(batch):
     ids, lengths, labels = zip(*batch)
     return (
@@ -172,7 +177,7 @@ def collate_fn(batch):
         torch.stack(labels),
     )
 
-
+# 划分训练/验证数据
 def split_data(phrases, labels, dev_ratio=0.1, seed=42):
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(phrases))
@@ -184,11 +189,12 @@ def split_data(phrases, labels, dev_ratio=0.1, seed=42):
     dev_y = [labels[i] for i in dev_idx]
     return train_p, train_y, dev_p, dev_y
 
-
+# 构建DataLoader、词表等，返回训练/验证集
 def make_loaders(config: TrainConfig, vocab=None):
     path = download_train_tsv()
     phrases, labels = load_phrases(path)
 
+    # 限定样本数以便快速实验
     if config.max_samples > 0 and config.max_samples < len(phrases):
         rng = np.random.default_rng(config.seed)
         idx = rng.choice(len(phrases), config.max_samples, replace=False)
@@ -197,6 +203,7 @@ def make_loaders(config: TrainConfig, vocab=None):
 
     train_p, train_y, dev_p, dev_y = split_data(phrases, labels, seed=config.seed)
 
+    # 仅根据训练集构建词表
     if vocab is None:
         vocab = Vocabulary(max_size=config.vocab_size)
         vocab.build(train_p)
@@ -221,7 +228,7 @@ def make_loaders(config: TrainConfig, vocab=None):
     oov_rate = vocab.oov_rate(dev_p)
     return train_loader, dev_loader, vocab, oov_rate
 
-
+# 对变长序列在batch中做掩码平均池化
 def masked_mean(x, lengths):
     mask = torch.arange(x.size(1), device=x.device)[None, :] < lengths[:, None]
     mask = mask.unsqueeze(-1).float()
@@ -229,13 +236,15 @@ def masked_mean(x, lengths):
     denom = mask.sum(dim=1).clamp(min=1.0)
     return summed / denom
 
-
+# 双向LSTM情感分类器
 class BiLSTMClassifier(nn.Module):
     """串行模型：双向 LSTM 编码 + 最后时刻池化。"""
 
     def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes, padding_idx=0):
         super().__init__()
+        # 词嵌入
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        # 双向LSTM
         self.lstm = nn.LSTM(
             embed_dim,
             hidden_dim,
@@ -243,18 +252,21 @@ class BiLSTMClassifier(nn.Module):
             bidirectional=True,
         )
         self.dropout = nn.Dropout(0.3)
+        # 分类器
         self.fc = nn.Linear(hidden_dim * 2, num_classes)
 
     def forward(self, x, lengths):
         emb = self.embedding(x)
+        # pack处理变长输入，提高LSTM效率
         packed = pack_padded_sequence(
             emb, lengths.cpu(), batch_first=True, enforce_sorted=False
         )
         _, (h, _) = self.lstm(packed)
+        # 拼接正反两个方向最后输出
         h_cat = torch.cat([h[-2], h[-1]], dim=1)
         return self.dropout(self.fc(h_cat))
 
-
+# 带自注意力的LSTM情感分类器
 class SelfAttentiveClassifier(nn.Module):
     """
     并行自注意力模型（Lin et al. 2017 风格）：
@@ -265,12 +277,14 @@ class SelfAttentiveClassifier(nn.Module):
     def __init__(self, vocab_size, embed_dim, hidden_dim, num_classes, padding_idx=0):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
+        # BiLSTM编码每个时刻
         self.lstm = nn.LSTM(
             embed_dim,
             hidden_dim,
             batch_first=True,
             bidirectional=True,
         )
+        # 注意力权重W, U
         self.attn_w = nn.Linear(hidden_dim * 2, hidden_dim)
         self.attn_u = nn.Linear(hidden_dim, 1, bias=False)
         self.dropout = nn.Dropout(0.3)
@@ -281,13 +295,15 @@ class SelfAttentiveClassifier(nn.Module):
         h, _ = self.lstm(emb)
         u = torch.tanh(self.attn_w(h))
         scores = self.attn_u(u).squeeze(-1)
+        # mask填充的pad部分，注意力为-inf，不参与归一化
         mask = torch.arange(x.size(1), device=x.device)[None, :] >= lengths[:, None]
         scores = scores.masked_fill(mask, float("-inf"))
         weights = torch.softmax(scores, dim=1).unsqueeze(-1)
+        # 注意力加权池化序列信息
         sent = (weights * h).sum(dim=1)
         return self.dropout(self.fc(sent))
 
-
+# 纯多头自注意力情感分类器
 class ParallelSelfAttentionClassifier(nn.Module):
     """纯并行模型：Embedding → Multi-Head Self-Attention → Masked Mean Pool。"""
 
@@ -303,6 +319,7 @@ class ParallelSelfAttentionClassifier(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, embed_dim, padding_idx=padding_idx)
         self.input_proj = nn.Linear(embed_dim, hidden_dim)
+        # 多头自注意力
         self.self_attn = nn.MultiheadAttention(
             hidden_dim, num_heads=num_heads, batch_first=True, dropout=0.1
         )
@@ -314,6 +331,7 @@ class ParallelSelfAttentionClassifier(nn.Module):
     def forward(self, x, lengths):
         emb = self.embedding(x)
         h = self.input_proj(emb)
+        # 生成padding mask，使填充不参与自注意力分数
         key_padding_mask = torch.arange(x.size(1), device=x.device)[None, :] >= lengths[
             :, None
         ]
@@ -321,10 +339,10 @@ class ParallelSelfAttentionClassifier(nn.Module):
             h, h, h, key_padding_mask=key_padding_mask, need_weights=False
         )
         h = self.norm(h + attn_out)
-        sent = masked_mean(h, lengths)
+        sent = masked_mean(h, lengths)  # mask平均池化
         return self.dropout(self.fc(sent))
 
-
+# 根据配置选择构建模型
 def build_model(config: TrainConfig, vocab_size):
     if config.model_type == "bilstm":
         return BiLSTMClassifier(vocab_size, config.embed_dim, config.hidden_dim, NUM_CLASSES)
@@ -342,7 +360,7 @@ def build_model(config: TrainConfig, vocab_size):
         )
     raise ValueError(f"Unknown model_type: {config.model_type}")
 
-
+# 单个epoch训练/评估
 def run_epoch(model, loader, criterion, optimizer, device, train=True):
     model.train(train)
     total_loss, correct, total = 0.0, 0, 0
@@ -366,7 +384,7 @@ def run_epoch(model, loader, criterion, optimizer, device, train=True):
 
     return total_loss / total, correct / total
 
-
+# 训练主循环，包含日志记录、保存最佳模型等
 def train_model(config: TrainConfig, device, log_tb=False, exp_name="run"):
     set_seed(config.seed)
     train_loader, dev_loader, vocab, oov_rate = make_loaders(config)
@@ -391,11 +409,13 @@ def train_model(config: TrainConfig, device, log_tb=False, exp_name="run"):
             model, dev_loader, criterion, optimizer, device, train=False
         )
 
+        # 日志记录
         history["train_loss"].append(train_loss)
         history["train_acc"].append(train_acc)
         history["dev_loss"].append(dev_loss)
         history["dev_acc"].append(dev_acc)
 
+        # 记录最佳模型
         if dev_acc > best_acc:
             best_acc = dev_acc
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
@@ -411,9 +431,11 @@ def train_model(config: TrainConfig, device, log_tb=False, exp_name="run"):
             f"train acc={train_acc:.4f} | dev acc={dev_acc:.4f}"
         )
 
+    # 恢复验证集上最佳结果
     if best_state:
         model.load_state_dict(best_state)
 
+    # TensorBoard词向量可视化
     if writer:
         sample_words = vocab.id2token[: min(500, len(vocab))]
         try:
@@ -439,7 +461,7 @@ def train_model(config: TrainConfig, device, log_tb=False, exp_name="run"):
         "vocab": vocab,
     }
 
-
+# 导出词向量，用于TensorBoard Projector可交互可视化
 def export_embeddings(model, vocab, path_prefix):
     os.makedirs(os.path.dirname(path_prefix), exist_ok=True)
     weights = model.embedding.weight.detach().cpu().numpy()
@@ -456,7 +478,7 @@ def export_embeddings(model, vocab, path_prefix):
             fv.write("\t".join(f"{x:.6f}" for x in weights[i]) + "\n")
     print(f"Embeddings exported to {vec_path} (use with TensorBoard Projector)")
 
-
+# 定义实验组设置
 def experiment_suite():
     base = TrainConfig()
     return [
@@ -468,7 +490,7 @@ def experiment_suite():
         ("vocab_20000", TrainConfig(model_type="bilstm", vocab_size=20000)),
     ]
 
-
+# 批量运行所有组实验，保存结果及绘图
 def run_all_experiments(device, epochs=6, max_samples=50000):
     os.makedirs(RESULT_DIR, exist_ok=True)
     os.makedirs(FIG_DIR, exist_ok=True)
@@ -502,7 +524,7 @@ def run_all_experiments(device, epochs=6, max_samples=50000):
     print(f"Results saved to {result_path}")
     return results
 
-
+# 可视化整体、训练曲线
 def plot_results(results):
     setup_plot_style()
     names = list(results.keys())
@@ -517,6 +539,7 @@ def plot_results(results):
     accs = [results[n]["best_dev_acc"] * 100 for n in names]
     oovs = [results[n]["oov_rate_dev"] * 100 for n in names]
 
+    # 柱状图：各实验准确率&OOV
     fig, axes = plt.subplots(1, 2, figsize=(13, 5))
 
     ax = axes[0]
@@ -544,6 +567,7 @@ def plot_results(results):
     fig.savefig(os.path.join(FIG_DIR, "experiment_summary.png"), dpi=150)
     plt.close(fig)
 
+    # 训练曲线
     fig, axes = plt.subplots(2, 3, figsize=(14, 8))
     for ax, name, label in zip(axes.flat, names, labels):
         hist = results[name]["history"]
@@ -560,7 +584,7 @@ def plot_results(results):
     fig.savefig(os.path.join(FIG_DIR, "training_curves.png"), dpi=150)
     plt.close(fig)
 
-
+# 实验结果保存为csv汇总
 def save_csv(results):
     path = os.path.join(RESULT_DIR, "experiment_summary.csv")
     with open(path, "w", newline="", encoding="utf-8-sig") as fp:
@@ -590,7 +614,7 @@ def save_csv(results):
                 ]
             )
 
-
+# 命令行入口：可选实验全局运行/单模型训练/仅绘图
 def main():
     parser = argparse.ArgumentParser(description="Rotten Tomatoes Sentiment Analysis")
     parser.add_argument(
@@ -612,11 +636,12 @@ def main():
 
     if args.mode == "plot":
         with open(os.path.join(RESULT_DIR, "experiment_results.json"), encoding="utf-8") as fp:
-            plot_results(json.load(fp))
+            plot_results(json.load(fp))  # 仅重画图
         print("Plots regenerated.")
     elif args.mode == "experiments":
         run_all_experiments(device, epochs=args.epochs, max_samples=args.max_samples)
     else:
+        # 单模型训练
         cfg = TrainConfig(
             model_type=args.model,
             vocab_size=args.vocab_size,
@@ -629,6 +654,6 @@ def main():
         torch.save(out["model"].state_dict(), os.path.join(RESULT_DIR, "best_model.pt"))
         print(f"Best dev acc: {out['best_dev_acc']:.4f}")
 
-
+# 脚本入口
 if __name__ == "__main__":
     main()
