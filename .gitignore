@@ -1,0 +1,97 @@
+# =========================
+# 数据集 / 大文件
+# =========================
+
+# 各任务 data 目录（CIFAR-10、烂番茄、COVID 等）
+**/data/
+**/dataset/
+**/datasets/
+
+# 常见数据集文件
+**/covid.train.csv
+**/covid.test.csv
+**/train.tsv
+**/test.tsv
+**/train.csv
+**/test.csv
+
+# 压缩包与原始下载
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.rar
+
+# 二进制 / 数组数据
+*.npz
+*.npy
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.mat
+
+# 模型权重与 checkpoint（体积大、可重新训练）
+*.pt
+*.pth
+*.ckpt
+*.onnx
+*.bin
+*.safetensors
+**/checkpoints/
+
+# 大体积词向量导出
+**/embedding_projector_*.tsv
+
+# TensorBoard / 训练日志
+**/runs/
+**/logs/
+**/tensorboard/
+
+# 可重新生成的训练输出（保留小型 csv/json 报告时可注释掉）
+# **/results/
+
+# =========================
+# Python
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+.env
+.env.*
+!.env.example
+
+# =========================
+# Jupyter / Notebook
+# =========================
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# =========================
+# IDE / 编辑器
+# =========================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# =========================
+# 操作系统
+# =========================
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# =========================
+# Office 临时文件
+# =========================
+~$*
+*.tmp
+*.temp
